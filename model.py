@@ -16,6 +16,7 @@ class FCN_rLSTM(nn.Module):
         Args:
             temporal: whether to have or not the LSTM block in the network (default: `False`).
             image_dim: tuple (height, width) with image dimensions, only needed if `temporal` is `True` (default: `None`).
+            dataset: name of the dataset to use (default: `TRANCOS`).
         """
         super(FCN_rLSTM, self).__init__()
 
@@ -118,6 +119,7 @@ class FCN_rLSTM(nn.Module):
 
         if mask is not None:
             X = X * mask  # zero input values outside the active region
+
         h1 = self.conv_blocks[0](X)
         h2 = self.conv_blocks[1](h1)
         h3 = self.conv_blocks[2](h2)

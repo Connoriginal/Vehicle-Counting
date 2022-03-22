@@ -16,6 +16,10 @@ import torchvision.transforms as T
 import np_transforms as NP_T
 from utils import density_map
 
+# pickle test
+import pickle
+import gzip
+
 
 class Trancos(Dataset):
     r"""
@@ -221,7 +225,8 @@ class TrancosSeq(Trancos):
 
 
 class WebcamT(Dataset):
-    def __init__(self, path='./data/WebCamT', out_shape=(120, 176), transform=None, gamma=300, get_cameras=False, cameras=None, load_all=True):
+    # 폴더 별 데이터셋 argument 추가 => file_name]
+    def __init__(self, path='./data/WebCamT', out_shape=(120, 176), transform=None, gamma=300, get_cameras=False, cameras=None, load_all=True, file_name='164'):
         r"""
         Args:
             train: train (`True`) or test (`False`) images (default: `True`).
@@ -232,26 +237,44 @@ class WebcamT(Dataset):
             get_cameras: whether or not to return the camera ID of each image (default: `False`).
             cameras: list with the camera IDs to be used, so that images from other cameras are discarded;
                 if `None`, all cameras are used; it has no effect if `get_cameras` is `False` (default: `None`).
+            file_name: file name of the dataset (default: '164')
         """
         self.path = path
         self.out_shape = out_shape
         self.transform = transform
         self.gamma = gamma
         self.load_all = load_all
+        self.file_name = file_name
 
         self.image_files = []
-        for cam in os.listdir(self.path):
-            if not os.path.isdir(os.path.join(self.path, cam)):
-                continue
 
-            for seq in os.listdir(os.path.join(self.path, cam)):
-                if not os.path.isdir(os.path.join(self.path, cam, seq)):
+        with gzip.open(self.path + '/vehicle_pixel_info.pickle', 'rb') as f:
+            data = pickle.load(f)
+
+        data_keys = list(data.keys())
+        data_keys.sort()
+
+        sep_flag = self.file_name.find('_')
+
+        self.bndboxes = {img_f: [] for img_f in data_keys}
+
+        for img in data_keys:
+            if sep_flag != -1:
+                fn = self.file_name.split('_')[0]
+            else:
+                fn = self.file_name
+
+            if img.split(os.sep)[0] != fn:
+                if len(self.image_files) != 0:
+                    break
+                else:
                     continue
+            else:
+                self.image_files.append(img)
+                for element in data[img]:
+                    self.bndboxes[img].append(element)
 
-                if 'big_bus' in seq:
-                    continue
-
-                self.image_files.extend([os.path.join(cam, seq, f) for f in os.listdir(os.path.join(self.path, cam, seq)) if f[-4:] == '.jpg'])
+        del data
 
         self.cam_ids = {}
         if get_cameras:
@@ -267,59 +290,32 @@ class WebcamT(Dataset):
                 self.image_files = [img_f for img_f in self.image_files if self.cam_ids[img_f] in cameras]
                 self.cam_ids = {img_f: self.cam_ids[img_f] for img_f in self.image_files}
 
-        # get the coordinates of the bounding boxes of all vehicles in all images
-        self.bndboxes = {img_f: [] for img_f in self.image_files}
-        for img_f in self.image_files:
-            # open an xml file and find '&' and remove it (it is not a valid XML character)
-            xml_file = open(os.path.join(self.path, img_f.replace('.jpg', '.xml')), 'r')
-            xml_str = xml_file.read()
-            xml_str = xml_str.replace('&', '')
-            root = ET.fromstring(xml_str)
-            for vehicle in root.iter('vehicle'):
-                xmin = int(vehicle.find('bndbox').find('xmin').text)
-                ymin = int(vehicle.find('bndbox').find('ymin').text)
-                xmax = int(vehicle.find('bndbox').find('xmax').text)
-                ymax = int(vehicle.find('bndbox').find('ymax').text)
-                self.bndboxes[img_f].append((xmin, ymin, xmax, ymax))
-
-        self.image_files.sort()
-
         if self.load_all:
             # load all the data into memory
             self.images, self.masks, self.densities = [], [], []
-            for img_f in self.image_files:
-                X, mask, density = self.load_example(img_f)
-                self.images.append(X)
-                self.masks.append(mask)
-                self.densities.append(density)
+            # for img_f in self.image_files:
+            #     X, mask, density = self.load_example(img_f)
+            #     self.images.append(X)
+            #     self.masks.append(mask)
+            #     self.densities.append(density)
+            with gzip.open(self.path + '/' + self.file_name + '.pickle', 'rb') as f:
+                data = pickle.load(f)
 
-    def load_example(self, img_f):
-        X = io.imread(os.path.join(self.path, img_f))
-        mask_f = os.path.join(img_f.split(os.sep)[0], img_f.split(os.sep)[1])+'_msk.png'
-        mask = Image.open(os.path.join(self.path, mask_f))
-        mask = np.array(mask)
-        mask = mask[:, :, np.newaxis].astype('float32')
-        bndboxes = self.bndboxes[img_f]
+            self.images, self.masks, self.densities = data['images'], data['masks'], data['densities']
+            # for mask in data['masks']:
+            #   self.masks.append(np.squeeze(mask, axis=2))
 
-        H_orig, W_orig = X.shape[0], X.shape[1]
-        # reduce the size of image and mask by the given amount
-        H_orig, W_orig = X.shape[0], X.shape[1]
-        if H_orig != self.out_shape[0] or W_orig != self.out_shape[1]:
-            X = SkT.resize(X, self.out_shape, preserve_range=True).astype('uint8')
-            mask = SkT.resize(mask, self.out_shape, preserve_range=True).astype('float32')
+            del data
 
-        # compute the density map
-        img_centers = [(int((xmin + xmax)/2.), int((ymin + ymax)/2.)) for xmin, ymin, xmax, ymax in bndboxes]
-        gammas = self.gamma*np.array([[1./np.absolute(xmax - xmin+0.001), 1./np.absolute(ymax - ymin+0.001)] for xmin, ymin, xmax, ymax in bndboxes])
-        # gammas = self.gamma*np.ones((len(bndboxes), 2))
-        density = density_map(
-            (H_orig, W_orig),
-            img_centers,
-            gammas,
-            out_shape=self.out_shape)
-        density = density[:, :, np.newaxis].astype('float32')
-
-        return X, mask, density
+        if sep_flag != -1:
+            half = int(len(self.images))
+            if self.file_name.split('_')[1].split('.')[0] == '1':
+                self.image_files = self.image_files[:half]
+            else:
+                if not self.file_name.split('_')[0] in ['170', '253', '398', '691']:
+                    self.image_files = self.image_files[half-1:]
+                else:
+                    self.image_files = self.image_files[half:]
 
     def __len__(self):
         return len(self.image_files)
@@ -334,16 +330,11 @@ class WebcamT(Dataset):
             cam_id: camera ID (only if `get_cameras` is `True`).
         """
 
-        if self.load_all:
-            img_f = self.image_files[i]
-            X = self.images[i]
-            mask = self.masks[i]
-            density = self.densities[i]
-            bndboxes = self.bndboxes[img_f]
-        else:
-            img_f = self.image_files[i]
-            X, mask, density = self.load_example(img_f)
-            bndboxes = self.bndboxes[img_f]
+        img_f = self.image_files[i]
+        X = self.images[i]
+        mask = self.masks[i]
+        density = self.densities[i]
+        bndboxes = self.bndboxes[img_f]
 
         # get the number of vehicles in the image and the camera ID
         count = len(bndboxes)
@@ -366,7 +357,7 @@ class WebcamTSeq(WebcamT):
     This version assumes the data is sequential, i.e. it returns sequences of images captured by the same camera.
     """
 
-    def __init__(self, path='./data/WebCamT', out_shape=(120, 176), transform=NP_T.ToTensor(), gamma=30, max_len=None, cameras=None, load_all=True):
+    def __init__(self, path='./data/WebCamT', out_shape=(120, 176), transform=NP_T.ToTensor(), gamma=30, max_len=None, cameras=None, load_all=True, file_name='164'):
         r"""
         Args:
             train: train (`True`) or test (`False`) images (default: `True`).
@@ -377,8 +368,9 @@ class WebcamTSeq(WebcamT):
             max_len: maximum sequence length (default: `None`).
             cameras: list with the camera IDs to be used, so that images from other cameras are discarded;
                 if `None`, all cameras are used; it has no effect if `get_cameras` is `False` (default: `None`).
+            file_name: file name of the dataset (default: '164')
         """
-        super(WebcamTSeq, self).__init__(path=path, out_shape=out_shape, transform=transform, gamma=gamma, get_cameras=True, cameras=cameras, load_all=load_all)
+        super(WebcamTSeq, self).__init__(path=path, out_shape=out_shape, transform=transform, gamma=gamma, get_cameras=True, cameras=cameras, load_all=load_all, file_name=file_name)
 
         self.img2idx = {img: idx for idx, img in enumerate(self.image_files)}  # hash table from file names to indices
         self.seqs = []
@@ -492,21 +484,3 @@ if __name__ == '__main__':
 
         for i, (X, mask, density, count, cid, seq_len) in enumerate(data):
             print('Seq {}: cid={}, len={}'.format(i, cid, seq_len))
-        
-    # Plot WebCamT 
-    # data = WebcamT(path='./data/WebCamT', transform=NP_T.RandomHorizontalFlip(0.5))
-    
-    # for i,(X, mask, density, count) in enumerate(data):
-    #     print('Image {}: count={}, density_sum={:.3f}'.format(i, count, np.sum(density)))
-    #     gs = gridspec.GridSpec(2, 2)
-    #     fig = plt.figure()
-    #     # Masked image
-    #     ax1 = fig.add_subplot(gs[0, 0])
-    #     ax1.imshow(X*mask/255.)
-    #     ax1.set_title('Masked image')
-    #     # Density map
-    #     ax2 = fig.add_subplot(gs[0, 1])
-    #     density = density.squeeze()
-    #     ax2.imshow(density, cmap='gray')
-    #     ax2.set_title('Density Map2')
-    #     plt.show()

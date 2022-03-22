@@ -9,14 +9,14 @@ import torchvision.transforms as T
 from torch.utils.data import DataLoader, Subset
 
 import np_transforms as NP_T
-from datasets import Trancos, WebcamT
+from datasets import WebcamT
 from model import FCN_rLSTM
 from utils import show_images
 import plotter
 
-def get_data_loaders(args_dataset, args_path, args_shape, train_transform, valid_transform, args_gamma, args_valid, args_batch_size, file_name):
+def get_data_loaders(args_path, args_shape, train_transform, valid_transform, args_gamma, args_valid, args_batch_size, file_name):
     if args_valid > 0:
-        data = WebcamT(path=args_path, out_shape=args_shape, transform=train_transform, gamma=args_gamma, file_name=file_name)
+        data = WebcamT(path=args_path, out_shape=args_shape, transform=valid_transform, gamma=args_gamma, file_name=file_name)
 
         valid_indices = set(random.sample(range(len(data)), int(len(data)*args_valid)))  # randomly choose some images for validation
         train_indices = set(range(len(data))) - valid_indices  # remaining images are for training
@@ -38,29 +38,36 @@ def get_data_loaders(args_dataset, args_path, args_shape, train_transform, valid
         del data, train_data
 
     else:
+        train_data = WebcamT(path=args_path, out_shape=args_shape, transform=train_transform, gamma=args_gamma, file_name=file_name)
+        train_loader = DataLoader(train_data,
+                                batch_size=args_batch_size,
+                                shuffle=True)  # shuffle the data at the beginning of each epoch
+
+        del train_data
+
         valid_loader = None
 
     return train_loader, valid_loader
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train FCN in Trancos or WebcamT datasets.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-m', '--model_path', default='./model/fcn.pth', type=str, metavar='', help='model file (output of train)')
-    parser.add_argument('-d', '--dataset', default='TRANCOS', type=str, metavar='', help='dataset')
-    parser.add_argument('-p', '--data_path', default='./data/TRANCOS_v3', type=str, metavar='', help='data directory path')
+    parser = argparse.ArgumentParser(description='Train FCN in WebcamT datasets.', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('-m', '--model_path', default='./model/fcn_wct.pth', type=str, metavar='', help='model file (output of train)')
+    parser.add_argument('-d', '--dataset', default='WebCamT', type=str, metavar='', help='dataset')
+    parser.add_argument('-p', '--data_path', default='./data/WebCamT', type=str, metavar='', help='data directory path')
     parser.add_argument('--valid', default=0.2, type=float, metavar='', help='fraction of the training data for validation')
-    parser.add_argument('--lr', default=1e-5, type=float, metavar='', help='learning rate')
+    parser.add_argument('--lr', default=1e-3, type=float, metavar='', help='learning rate')
     parser.add_argument('--ct', default=False, type=bool, metavar='', help='continue training from a previous model')
     parser.add_argument('--epochs', default=501, type=int, metavar='', help='number of training epochs')
     parser.add_argument('--batch_size', default=32, type=int, metavar='', help='batch size')
-    parser.add_argument('--img_shape', default=[240, 352], type=int, metavar='', help='shape of the input images')
-    parser.add_argument('--lambda', default=1e-2, type=float, metavar='', help='trade-off between density estimation and vehicle count losses (see eq. 7 in the paper)')
+    parser.add_argument('--img_shape', default=[120, 160], type=int, metavar='', help='shape of the input images')
+    parser.add_argument('--lambda', default=1e-3, type=float, metavar='', help='trade-off between density estimation and vehicle count losses (see eq. 7 in the paper)')
     parser.add_argument('--gamma', default=1e3, type=float, metavar='', help='precision parameter of the Gaussian kernel (inverse of variance)')
     parser.add_argument('--weight_decay', default=0., type=float, metavar='', help='weight decay regularization')
     parser.add_argument('--use_cuda', default=True, type=int, metavar='', help='use CUDA capable GPU')
     parser.add_argument('--use_tensorboard', default=True, type=int, metavar='', help='use TensorBoardX to visualize plots')
     parser.add_argument('--tb_img_shape', default=[120, 160], type=int, metavar='', help='shape of the images to be visualized in TensorBoardX')
-    parser.add_argument('--log_dir', default='./log/fcn_train', help='tensorboard log directory')
+    parser.add_argument('--log_dir', default='./log/fcn_wct_train', help='tensorboard log directory')
     parser.add_argument('--n2show', default=2, type=int, metavar='', help='number of examples to show in Tensorboard in each epoch')
     parser.add_argument('--seed', default=42, type=int, metavar='', help='random seed')
     args = vars(parser.parse_args())
@@ -86,39 +93,14 @@ def main():
     ])
     valid_transf = NP_T.ToTensor()  # no data augmentation in validation
 
-    if args['dataset'].upper() == 'TRANCOS':
-        train_data = Trancos(train=True, path=args['data_path'], out_shape=args['img_shape'], transform=train_transf, gamma=args['gamma'])
-        print("Train data loaded")
-        valid_data = Trancos(train=True, path=args['data_path'], out_shape=args['img_shape'], transform=valid_transf, gamma=args['gamma'])
-        print("Valid data loaded")
-
-        if args['valid'] > 0:
-            valid_indices = set(random.sample(range(len(train_data)), int(len(train_data)*args['valid'])))  # randomly choose some images for validation
-            valid_data = Subset(valid_data, list(valid_indices))
-            train_indices = set(range(len(train_data))) - valid_indices  # remaining images are for training
-            train_data = Subset(train_data, list(train_indices))
-        else:
-            valid_data = None
-        
-        train_loader = DataLoader(train_data,
-                                batch_size=args['batch_size'],
-                                shuffle=True)  # shuffle the data at the beginning of each epoch
-        if valid_data:
-            valid_loader = DataLoader(valid_data,
-                                    batch_size=args['batch_size'],
-                                    shuffle=False)  # no need to shuffle in validation
-        else:
-            valid_loader = None
-
-        file_list = ['TRANCOS']
-    else:
-        file_list = ['164', '166', '170_1', '170_2', '173_1', '173_2', '181', '253_1', '253_2', '398_1', '398_2',
-                    '403_1', '403_2', '410_1', '410_2', '495_1', '495_2', '511_1', '511_2', '551_1', '551_2',
-                    '572_1', '572_2', '691_1', '691_2', '846_1', '846_2', '928', 'bigbus']
+    file_list = ['164', '166', '170_1', '170_2', '173_1', '173_2', '181', '253_1', '253_2', '398_1', '398_2',
+                '403_1', '403_2', '410_1', '410_2', '495_1', '495_2', '511_1', '511_2', '551_1', '551_2',
+                '572_1', '572_2', '691_1', '691_2', '846_1', '846_2', '928', 'bigbus']
 
     # instantiate the model and define an optimizer
     if(args['ct']):
-        model = torch.load(args['model_path']).to(device)
+        model = FCN_rLSTM(temporal=False).to(device)
+        model.load_state_dict(torch.load(args['model_path']))
         print("Existing model loaded")
     else:
         model = FCN_rLSTM(temporal=False).to(device)
@@ -148,11 +130,10 @@ def main():
         t0 = time.time()
         
         for file_elem in file_list:
-            if args['dataset'].upper() != 'TRANCOS':
-                train_loader, valid_loader = get_data_loaders(args_dataset=args['dataset'], args_path=args['data_path'], args_shape=args['img_shape'],
-                                                        train_transform=train_transf, valid_transform=valid_transf, args_gamma=args['gamma'],
-                                                        args_valid=args['valid'], args_batch_size=args['batch_size'], file_name=file_elem)
-                print("WebCamT "+file_elem+" data loaded")
+            train_loader, valid_loader = get_data_loaders(args_path=args['data_path'], args_shape=args['img_shape'],
+                                                    train_transform=train_transf, valid_transform=valid_transf, args_gamma=args['gamma'],
+                                                    args_valid=args['valid'], args_batch_size=args['batch_size'], file_name=file_elem)
+            print("WebCamT "+file_elem+" data loaded")
 
             for i, (X, mask, density, count) in enumerate(train_loader):
                 # copy the tensors to GPU (if applicable)
@@ -172,10 +153,9 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-                if args['dataset'].upper() != 'TRANCOS' or epoch % 30 == 0:
-                    print('{}/{} mini-batch loss: {:.3f} | density loss: {:.3f} | count loss: {:.3f}'
-                        .format(i, len(train_loader)-1, loss.item(), density_loss.item(), count_loss.item()),
-                        flush=True, end='\r')
+                print('{}/{} mini-batch loss: {:.3f} | density loss: {:.3f} | count loss: {:.3f}'
+                    .format(i, len(train_loader)-1, loss.item(), density_loss.item(), count_loss.item()),
+                    flush=True, end='\r')
 
                 # save the loss values
                 loss_hist.append(loss.item())
@@ -194,11 +174,11 @@ def main():
         train_density_loss = sum(density_loss_hist)/len(density_loss_hist)
         train_count_loss = sum(count_loss_hist)/len(count_loss_hist)
         train_count_err = sum(count_err_hist)/len(count_err_hist)
-        if args['dataset'].upper() != 'TRANCOS' or epoch % 30 == 0:
-            print('Training statistics:')
-            print('global loss: {:.3f} | density loss: {:.3f} | count loss: {:.3f} | count error: {:.3f}'
-                .format(train_loss, train_density_loss, train_count_loss, train_count_err))
-            print('time: {:.0f} seconds'.format(t1-t0))
+
+        print('Training statistics:')
+        print('global loss: {:.3f} | density loss: {:.3f} | count loss: {:.3f} | count error: {:.3f}'
+            .format(train_loss, train_density_loss, train_count_loss, train_count_err))
+        print('time: {:.0f} seconds'.format(t1-t0))
 
         if args['use_tensorboard']:
             tensorboard_plt.loss_plot('Global Loss', 'train', train_loss, epoch)
@@ -206,17 +186,15 @@ def main():
             tensorboard_plt.loss_plot('Count Loss', 'train', train_count_loss, epoch)
             tensorboard_plt.loss_plot('Count Error', 'train', train_count_err, epoch)
 
-            if args['dataset'].upper() != 'TRANCOS' or epoch % 50 == 0:
-                # show a few training examples (images + density maps)
-                X *= mask  # show the active region only
-                X, density, count = X.cpu().numpy(), density.cpu().numpy(), count.cpu().numpy()
-                density_pred, count_pred = density_pred.detach().cpu().numpy(), count_pred.detach().cpu().numpy()
-                n2show = min(args['n2show'], X.shape[0])  # show args['n2show'] images at most           
-                show_images(tensorboard_plt, 'Ground Truth', 'train',X[0:n2show], density[0:n2show], count[0:n2show], shape=args['tb_img_shape'],global_step = epoch)
-                show_images(tensorboard_plt, 'Prediction', 'train', X[0:n2show], density_pred[0:n2show], count_pred[0:n2show], shape=args['tb_img_shape'],global_step = epoch)
+            # show a few training examples (images + density maps)
+            X *= mask  # show the active region only
+            X, density, count = X.cpu().numpy(), density.cpu().numpy(), count.cpu().numpy()
+            density_pred, count_pred = density_pred.detach().cpu().numpy(), count_pred.detach().cpu().numpy()
+            n2show = min(args['n2show'], X.shape[0])  # show args['n2show'] images at most           
+            show_images(tensorboard_plt, 'Ground Truth', 'train',X[0:n2show], density[0:n2show], count[0:n2show], shape=args['tb_img_shape'],global_step = epoch)
+            show_images(tensorboard_plt, 'Prediction', 'train', X[0:n2show], density_pred[0:n2show], count_pred[0:n2show], shape=args['tb_img_shape'],global_step = epoch)
 
-        if not args['dataset'].upper() == 'TRANCOS':
-            del train_loader, X, density, count
+        del train_loader, X, density, count
 
         if valid_loader is None:
             print()
@@ -258,12 +236,11 @@ def main():
         valid_count_loss = sum(count_loss_hist)/len(count_loss_hist)
         valid_count_err = sum(count_err_hist)/len(count_err_hist)
 
-        if args['dataset'].upper() != 'TRANCOS' or epoch % 30 == 0:
-            print('Validation statistics:')
-            print('global loss: {:.3f} | density loss: {:.3f} | count loss: {:.3f} | count error: {:.3f}'
-                .format(valid_loss, valid_density_loss, valid_count_loss, valid_count_err))
-            print('time: {:.0f} seconds'.format(t1-t0))
-            print()
+        print('Validation statistics:')
+        print('global loss: {:.3f} | density loss: {:.3f} | count loss: {:.3f} | count error: {:.3f}'
+            .format(valid_loss, valid_density_loss, valid_count_loss, valid_count_err))
+        print('time: {:.0f} seconds'.format(t1-t0))
+        print()
 
         if args['use_tensorboard']:
             # Single plot for all validation losses
@@ -278,25 +255,15 @@ def main():
             tensorboard_plt.overlap_plot('Count Loss',{'train':train_count_loss,'valid':valid_count_loss}, epoch)
             tensorboard_plt.overlap_plot('Count Error',{'train':train_count_err,'valid':valid_count_err}, epoch)
 
-            if args['dataset'].upper() == 'TRANCOS' and epoch & 50 == 0:
-                # show a few training examples (images + density maps)
-                X *= mask  # show the active region only
-                X, density, count = X.cpu().numpy(), density.cpu().numpy(), count.cpu().numpy()
-                density_pred, count_pred = density_pred.cpu().numpy(), count_pred.cpu().numpy()
-                n2show = min(args['n2show'], X.shape[0])  # show args['n2show'] images at most
-                show_images(tensorboard_plt, 'Ground Truth', 'valid', X[0:n2show], density[0:n2show], count[0:n2show], shape=args['tb_img_shape'],global_step=epoch)
-                show_images(tensorboard_plt, 'Prediction', 'valid', X[0:n2show], density_pred[0:n2show], count_pred[0:n2show], shape=args['tb_img_shape'],global_step=epoch)
-            elif args['dataset'].upper() != 'TRANCOS':
-                X *= mask  # show the active region only
-                X, density, count = X.cpu().numpy(), density.cpu().numpy(), count.cpu().numpy()
-                density_pred, count_pred = density_pred.cpu().numpy(), count_pred.cpu().numpy()
-                n2show = min(args['n2show'], X.shape[0])  # show args['n2show'] images at most
-                show_images(tensorboard_plt, 'Ground Truth', 'valid', X[0:n2show], density[0:n2show], count[0:n2show], shape=args['tb_img_shape'],global_step=epoch)
-                show_images(tensorboard_plt, 'Prediction', 'valid', X[0:n2show], density_pred[0:n2show], count_pred[0:n2show], shape=args['tb_img_shape'],global_step=epoch)
+            X *= mask  # show the active region only
+            X, density, count = X.cpu().numpy(), density.cpu().numpy(), count.cpu().numpy()
+            density_pred, count_pred = density_pred.cpu().numpy(), count_pred.cpu().numpy()
+            n2show = min(args['n2show'], X.shape[0])  # show args['n2show'] images at most
+            show_images(tensorboard_plt, 'Ground Truth', 'valid', X[0:n2show], density[0:n2show], count[0:n2show], shape=args['tb_img_shape'],global_step=epoch)
+            show_images(tensorboard_plt, 'Prediction', 'valid', X[0:n2show], density_pred[0:n2show], count_pred[0:n2show], shape=args['tb_img_shape'],global_step=epoch)
             
 
-        if not args['dataset'].upper() == 'TRANCOS':
-            del valid_loader, X, density, count
+        del valid_loader, X, density, count
 
     if args['use_tensorboard']:
         tensorboard_plt.close()
