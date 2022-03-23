@@ -84,9 +84,9 @@ def main():
             density_pred, count_pred = model(X, mask=mask)
 
         # compute the performance metrics
-        density_loss += torch.sum((density_pred - density)**2)/2
-        count_loss += torch.sum((count_pred - count)**2)/2
-        count_err += torch.sum(torch.abs(count_pred - count))
+        density_loss += torch.sum((density_pred[-1] - density[-1])**2)/2
+        count_loss += torch.sum((count_pred[-1] - count[-1])**2)/2
+        count_err += torch.sum(torch.abs(count_pred[-1] - count[-1]))
 
         # save a few examples to show in Tensorboard
         if args['use_tensorboard'] and (nsaved < args['n2show']):
