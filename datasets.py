@@ -293,17 +293,10 @@ class WebcamT(Dataset):
         if self.load_all:
             # load all the data into memory
             self.images, self.masks, self.densities = [], [], []
-            # for img_f in self.image_files:
-            #     X, mask, density = self.load_example(img_f)
-            #     self.images.append(X)
-            #     self.masks.append(mask)
-            #     self.densities.append(density)
             with gzip.open(self.path + '/' + self.file_name + '.pickle', 'rb') as f:
                 data = pickle.load(f)
 
             self.images, self.masks, self.densities = data['images'], data['masks'], data['densities']
-            # for mask in data['masks']:
-            #   self.masks.append(np.squeeze(mask, axis=2))
 
             del data
 
@@ -375,7 +368,7 @@ class WebcamTSeq(WebcamT):
         self.img2idx = {img: idx for idx, img in enumerate(self.image_files)}  # hash table from file names to indices
         self.seqs = []
         for i, img_f in enumerate(self.image_files):
-            seq_id = img_f.split(os.sep)
+            seq_id = img_f.split(os.sep)[0]
             if i == 0:
                 self.seqs.append([img_f])
                 prev_seq_id = seq_id

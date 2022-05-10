@@ -14,6 +14,9 @@ import torch
 
 from utils import density_map
 
+import matplotlib.pyplot as plt
+import torchvision.transforms.functional as TF
+
 
 ## mk_bndboxes 함수 안에 들어가는 path는 './data/WebCamT'로 설정되어야지 './data/WebCamT' 폴더 안에 pickle 파일이 생성됨
 def mk_bndboxes(path, image_files):
@@ -53,8 +56,12 @@ def load_example(img_f, bndboxes, out_shape, gamma, path):
             mask = SkT.resize(mask, out_shape, preserve_range=True).astype('float32')
 
         # compute the density map
-        img_centers = [(int((xmin + xmax)/2.), int((ymin + ymax)/2.)) for xmin, ymin, xmax, ymax in bndboxes]
-        gammas = gamma*np.array([[1./np.absolute(xmax - xmin+0.001), 1./np.absolute(ymax - ymin+0.001)] for xmin, ymin, xmax, ymax in bndboxes])
+        img_centers = []
+        for xmin, ymin, xmax, ymax in bndboxes:
+          img_centers.append((int(np.absolute(xmax-np.absolute(xmax - xmin))/2.), int(np.absolute(ymax-np.absolute(ymax - ymin))/2.)))
+        # img_centers = [(int((xmax - xmin)/2.), int((ymax - ymin)/2.)) for xmin, ymin, xmax, ymax in bndboxes]
+        gammas=gamma*np.ones((len(img_centers), 2))
+        # gammas = gamma*np.array([[1./np.absolute(xmax - xmin+0.001), 1./np.absolute(ymax - ymin+0.001)] for xmin, ymin, xmax, ymax in bndboxes])
         # gammas = self.gamma*np.ones((len(bndboxes), 2))
         density = density_map(
             (H_orig, W_orig),
@@ -118,7 +125,7 @@ def main():
     images, masks, densities = [], [], []
     for img_f in image_files:
         file_name = img_f.split(os.sep)[0]
-        if os.path.isfile(path+'/'+file_name+'.pickle'):
+        if os.path.isfile(path+'/'+file_name+'.pickle') or os.path.isfile(path+'/'+file_name+'_2.pickle'):
             continue
         print(img_f)
         X, mask, density = load_example(img_f=img_f, bndboxes=bndboxes[img_f], out_shape=args['img_shape'], gamma=args['gamma'], path=path)
